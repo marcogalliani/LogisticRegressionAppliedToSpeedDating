@@ -1,0 +1,428 @@
+---
+title: "Progetto R: Speed dating dataset"
+output: html_notebook
+---
+
+Librerie:
+
+```{r}
+set.seed(050701)
+library(foreign)
+library(rms)
+library(arm)
+library(ResourceSelection)
+library(pROC)
+library(PRROC)
+library(ROCR)
+library(readr)
+library(dplyr)
+library(tidyr)
+library(GGally)
+library(heatmaply)
+library(plotly)
+library(ggplot2)
+library(gridExtra)
+library(ggpubr)
+library(RColorBrewer)
+library(scales)
+library(ggmap)
+library(countrycode)
+library(regclass)
+library(bestglm)
+library(OddsPlotty)
+```
+
+## 1) PRESENTAZIONE, IMPORTAZIONE, PULIZIA
+
+Importo e pulisco il dataset:
+
+```{r}
+c_data <- read_csv("Speed Dating Data.csv")
+#eliminiamo i duplicati
+#qui abbiamo il dataset completo
+c_data <- c_data %>% group_by(iid) %>% filter (! duplicated(iid))
+
+#features che ci interessano:
+data=subset(c_data,select=c(attr,sinc,intel,fun,amb,shar,dec,like,samerace,int_corr,prob,race,gender,age,age_o,income,goal,go_out,date,met))
+#voglio aggiungere la variabile d_age con la differenza di età tra l'individuo considerato e il partner
+data$d_age=abs(data$age-data$age_o) 
+
+#per le features che ci interessano eliminiamo gli na
+print(sapply(data,function(x) sum(length(which(is.na(x))))))
+
+#tolgo la variabile income perchè ho molti na 
+data$income=NULL
+data$shar=NULL
+
+#elimino gli na: eliminate 60 osservazioni 
+data <- na.omit(data)
+
+#decodifico race:
+data$race=as.factor(data$race)
+levels(data$race)
+data$race=recode(data$race, '1' = 'Black', '2' = 'White','3' = 'Hispanic','4' = 'Asian','6'= 'Other')
+
+#decodifico gender:
+data$gender=as.factor(data$gender)
+levels(data$gender)
+data$gender=recode(data$gender, '1' = 'Male', '0' = 'Female')
+
+#decodifico goal:
+data$goal=as.factor(data$goal)
+levels(data$goal)
+data$goal=recode(data$goal, '1'='Fun', '2'='Meet', '3'='Date', '4'= 'Relationship', '5'= 'IdidIt', '6'= 'Other')
+
+#decodifico go_out: (abitudini sociali: quanto escono alla settimana)
+data$go_out=as.factor(data$go_out)
+levels(data$go_out)
+data$go_out=recode(data$go_out, '1'='Several_pw', '2'='Twice_pw', '3'='Once_pw', '4'= 'Twice_pm', '5'= 'Once_pm', '6'= 'Several_py','7'='Almost_never')
+
+#decodifico date: (abitudini negli appuntamenti: a quanti appuntamenti vanno)
+data$date=as.factor(data$date)
+levels(data$date)
+data$date=recode(data$date, '1'='Several_pw', '2'='Twice_pw', '3'='Once_pw', '4'= 'Twice_pm', '5'= 'Once_pm', '6'= 'Several_py','7'='Almost_never')
+
+#decodifico samerace
+data$samerace=as.factor(data$samerace)
+levels(data$samerace)
+data$samerace=recode(data$samerace, '0'='NO', '1'='SI')
+
+```
+
+### 2) ANALISI ESPLORATIVA
+
+Chi sono le persone presenti nel campione che stiamo analizzando:
+
+```{r}
+attach(data)
+
+#maschi e femmine
+
+mf_fig=ggplot(data,aes(gender))+geom_bar(aes(fill=gender))+scale_fill_brewer(palette='Pastel1')+theme(legend.position="none")
+
+
+#età per genere
+age_fig=ggplot(data,aes(age))+geom_bar(aes(fill=gender))+scale_fill_brewer(palette='Pastel1')
+
+#etnia
+etnia_fig=ggplot(data,aes(race))+geom_bar(aes(fill=race))+theme(legend.position="none")+scale_fill_brewer(palette='Pastel1')
+
+#ABITUDINI, SCOPI
+#go_out
+goout_fig=ggplot(data,aes(go_out))+geom_bar(aes(fill=go_out))+theme(legend.position="none")+scale_fill_brewer(palette='Pastel1')
+
+#date
+date_fig=ggplot(data,aes(date))+geom_bar(aes(fill=date))+theme(legend.position="none")+scale_fill_brewer(palette='Pastel1')
+
+#goal
+goal_fig=ggplot(data,aes(goal))+geom_bar(aes(fill=goal))+theme(legend.position="none")+scale_fill_brewer(palette='Pastel1')
+
+#figura complessiva
+ggarrange(mf_fig,age_fig,etnia_fig,goout_fig,date_fig,goal_fig)
+
+detach(data)
+```
+
+Rappresentiamo il legame tra le risposte al questionario e la decisione finale dell'individuo:
+
+```{r}
+attach(data)
+#dec vs attr
+y_attr=tapply(dec,attr,mean)
+decvsattr_fig=ggplot()+geom_count(aes(attr, dec))+geom_count(aes(sort(unique(attr)), y_attr, colour='red',size=3))+labs(x='attr',y='dec',title='Dec vs Attr')+theme_light()+theme(legend.position="none")
+
+#dec vs sinc 
+y_sinc=tapply(dec,sinc,mean)
+decvssinc_fig=ggplot()+geom_count(data = data, aes(sinc, dec))+geom_count(aes(sort(unique(sinc)), y_sinc,color='red',size=3))+labs(x='sinc',y='dec',title='Dec vs Sinc')+theme_light()+theme(legend.position="none")
+
+#dec vs intel
+y_intel=tapply(dec,intel,mean)
+decvsintel_fig=ggplot()+geom_count(data = data, aes(intel, dec))+geom_count(aes(sort(unique(intel)), y_intel,color='red',size=3))+labs(x='intel',y='dec',title='Dec vs Intel')+theme_light()+theme(legend.position="none")
+
+#dec vs fun
+y_fun=tapply(dec,fun,mean)
+decvsfun_fig=ggplot()+geom_count(data = data, aes(fun, dec))+geom_count(aes(sort(unique(fun)), y_fun,color='red',size=3))+labs(x='fun',y='dec',title='Dec vs Fun')+theme_light()+theme(legend.position="none")
+
+#dec vs amb
+y_amb=tapply(dec,amb,mean)
+decvsamb_fig=ggplot()+geom_count(data = data, aes(amb, dec))+geom_count(aes(sort(unique(amb)), y_amb,color='red',size=3))+labs(x='amb',y='dec',title='Dec vs Amb')+theme_light()+theme(legend.position="none")
+
+#dec vs like
+y_like=tapply(dec,like,mean)
+decvslike_fig=ggplot()+geom_count(data = data, aes(like, dec))+geom_count(aes(sort(unique(like)), y_like,color='red',size=3))+labs(x='like',y='dec',title='Dec vs Like')+theme_light()+theme(legend.position="none")
+
+#dec vs prob
+y_prob=tapply(dec,prob,mean)
+decvsprob_fig=ggplot()+geom_count(data = data, aes(prob, dec))+geom_count(aes(sort(unique(prob)), y_prob,color='red',size=3))+labs(x='prob',y='dec',title='Dec vs Prob')+theme_light()+theme(legend.position="none")
+
+#immagine completa
+ggarrange(decvsattr_fig,decvssinc_fig,decvsintel_fig,decvsfun_fig,decvsamb_fig,decvslike_fig,decvsprob_fig,nrow=2)
+
+detach(data)
+```
+
+Vediamo ora come influenzano la risposta le variabili categoriche gender, race, samerace, date, goal, go_out:
+
+```{r}
+#rate of positive dec
+attach(data)
+#gender
+gender_rate=data %>% 
+  group_by(gender) %>%
+  summarise(across(dec, mean, na.rm = TRUE))
+
+genderrate_fig=ggplot()+geom_col(aes(gender_rate$gender,percent(gender_rate$dec),fill=gender_rate$gender))+theme(legend.position="none")+scale_fill_brewer(palette='Pastel1')+labs(x="gender",y="PFR")
+
+#etnia
+etnia_rate=data %>% 
+  group_by(race) %>%
+  summarise(across(dec, mean, na.rm = TRUE))
+
+etniarate_fig=ggplot()+geom_col(aes(etnia_rate$race,percent(etnia_rate$dec),fill=etnia_rate$race))+theme(legend.position="none")+scale_fill_brewer(palette='Pastel1')+labs(x="etnia",y="PFR")
+
+#date
+date_rate=data %>% 
+  group_by(date) %>%
+  summarise(across(dec, mean, na.rm = TRUE))
+
+daterate_fig=ggplot()+geom_col(aes(date_rate$date,percent(date_rate$dec),fill=date_rate$date))+theme(legend.position="none")+scale_fill_brewer(palette='Pastel1')+labs(x="date",y="PFR")
+
+#goal
+goal_rate=data %>% 
+  group_by(goal) %>%
+  summarise(across(dec, mean, na.rm = TRUE))
+
+goalrate_fig=ggplot()+geom_col(aes(goal_rate$goal,percent(goal_rate$dec),fill=goal_rate$goal))+theme(legend.position="none")+scale_fill_brewer(palette='Pastel1')+labs(x="goal",y="PFR")
+
+#go_out
+goout_rate=data %>% 
+  group_by(go_out) %>%
+  summarise(across(dec, mean, na.rm = TRUE))
+
+gooutrate_fig=ggplot()+geom_col(aes(goout_rate$go_out,percent(goout_rate$dec),fill=goout_rate$go_out))+theme(legend.position="none")+scale_fill_brewer(palette='Pastel1')+labs(x="go_out",y="PFR")
+
+#samerace
+samerace_rate=data %>% 
+  group_by(samerace) %>%
+  summarise(across(dec, mean, na.rm = TRUE))
+
+sameracerate_fig=ggplot()+geom_col(aes(samerace_rate$samerace,percent(samerace_rate$dec),fill=samerace_rate$samerace))+theme(legend.position="none")+scale_fill_brewer(palette='Pastel1')+labs(x="samerace",y="PFR")
+
+
+#figura complessiva 
+ggarrange(genderrate_fig,etniarate_fig,daterate_fig,goalrate_fig,gooutrate_fig,sameracerate_fig)
+
+detach(data)
+```
+
+Valutiamo l'impatto della variabile int_cor sulla decisione degli individui:
+
+```{r}
+attach(data)
+
+x=seq(-1,1,0.15)
+mid=c((x[2:length(x)]+x[1:(length(x)-1)])/2)
+classi=cut(int_corr,breaks=x,include.lowest=TRUE,right=FALSE)
+
+y=tapply(dec,classi,mean)
+y
+
+fig=ggplot()+geom_point(aes(int_corr,dec))+geom_point(aes(mid,y,color='red'))
+fig
+detach(data)
+```
+
+Concludiamo osservando l'andamento della decisione in base all'età dei pratecipanti e alla differenza di età tra partecipanti e partner:
+
+```{r}
+attach(data)
+
+x=seq(min(age),max(age),2)
+mid=c((x[2:length(x)]+x[1:(length(x)-1)])/2)
+classi=cut(age,breaks=x,include.lowest=TRUE,right=FALSE)
+
+y=tapply(dec,classi,mean)
+y
+
+fig=ggplot()+geom_count(aes(age,dec))+geom_point(aes(mid,y,color='red'))
+fig
+detach(data)
+
+```
+
+```{r}
+attach(data)
+
+x=seq(min(d_age),max(d_age),)
+mid=c((x[2:length(x)]+x[1:(length(x)-1)])/2)
+classi=cut(d_age,breaks=x,include.lowest=TRUE,right=FALSE)
+
+y=tapply(dec,classi,mean)
+y
+
+fig=ggplot()+geom_point(aes(mid,y,color='red'))+geom_count(aes(d_age,dec))+labs(x="d_age",y="dec")
+fig
+detach(data)
+```
+
+Correlazione tra le varie features:
+
+```{r}
+Rdata=subset(data,select=c(attr,prob,intel,sinc,age,fun,amb,like,int_corr,d_age))
+#visualizziamo la correlazione tra le variabili presenti nel dataset
+
+heatmaply_cor(cor(Rdata),xlab = "Features",ylab = "Features",k_col = 2,k_row = 2,colors = magma(1000),cellnote=cor(Rdata),cellnote_textposition = "middle center",cellnote_size = 10)
+
+```
+
+## 3) COSTRUZIONE DEL MODELLO
+
+Prima di iniziare a costruire il modello dividiamo il dataset in training set e test set per la cross-validazione: lavoreremo sul training dataset
+
+```{r}
+smp_size <- floor(0.8 * nrow(data))
+
+## set the seed to make your partition reproducible
+train_ind <- sample(seq_len(nrow(data)), size = smp_size)
+
+train <- data[train_ind, ]
+test <- data[-train_ind, ]
+```
+
+Fittiamo un modello di regressione logistica per vedere quali variabili sono significative per predire la decisione di un individuo:
+
+```{r}
+attach(train)
+
+mod0=glm(dec~attr+sinc+intel+fun+amb+like+samerace+int_corr+prob+race+gender+d_age+met+date+goal+go_out,family=binomial(link="logit"),train)
+summary(mod0)
+
+
+
+
+modf=step(mod0,direction="both",scope=~attr+sinc+intel+fun+amb+like+samerace+int_corr+prob+race+date+gender+d_age+met+goal+go_out )
+summary(modf)
+
+vif(modf)
+
+detach(train)
+```
+
+Costruiamo il classificatore:
+
+```{r}
+soglia=0.5
+valori_reali=train$dec    
+valori_predetti=as.numeric(modf$fitted.values>soglia)
+
+tab=table(valori_reali,valori_predetti)
+tab
+
+accuratezza = sum(diag(tab))/sum(tab)
+accuratezza
+
+specificita = tab[1,1]/(tab[1,1]+tab[1,2])
+specificita
+FPR=1-specificita 
+
+
+sensitivita = tab[2,2]/(tab[2,1]+tab[2,2])
+sensitivita
+
+fit=modf$fitted
+PRROC_obj <- roc.curve(scores.class0 = fit, weights.class0=as.numeric(paste(train$dec)),
+                       curve=TRUE)
+
+
+plot(PRROC_obj)
+points(FPR,sensitivita,pch=4,lwd=3,cex=1.5,col='blue')
+
+#trovare la soglia ottima: sembrerebbe essere 0.340
+mycurve = roc(train$dec,modf$fitted.values)
+plot(mycurve,print.thres=TRUE)
+
+#ricalcolo le tabelle di misclassificazione
+soglia=0.340
+valori_reali=train$dec    
+valori_predetti=as.numeric(modf$fitted.values>soglia)
+
+tab=table(valori_reali,valori_predetti)
+tab
+
+accuratezza = sum(diag(tab))/sum(tab)
+accuratezza
+
+specificita = tab[1,1]/(tab[1,1]+tab[1,2])
+specificita
+FPR=1-specificita 
+
+
+sensitivita = tab[2,2]/(tab[2,1]+tab[2,2])
+sensitivita
+
+
+```
+
+## 4) DIAGNOSTICA E GOF
+
+Check collinearità:
+
+```{r}
+vif(modf)
+```
+
+Verifichiamo che il modello ridotto non sia meno informativo del modello completo iniziale con un test anova:
+
+```{r}
+anova(modf,mod0,test="Chisq")
+```
+
+Test di Hosmer e Lemeshow per valutare GOF modello:
+
+```{r}
+hoslem.test(modf$y,fitted(modf),g=10)
+
+dim(model.matrix(modf))
+```
+
+Odds ratio per interpretare i coefficienti:
+
+```{r}
+library(OddsPlotty)
+plotty=odds_plot(modf)
+plotty$odds_plot
+
+```
+
+Testiamo il modello fittato sul test set:
+
+```{r}
+predTest <- predict(modf, test, type="response")
+
+
+soglia=0.340  # threshold for categorizing predicted probabilities
+predFac <- cut(predTest, breaks=c(-Inf, soglia, Inf), labels=c('0', '1'))
+
+Tab    <- table(test$dec, predFac, dnn=c("actual", "predicted"))
+Tab
+
+accuratezza = sum(diag(Tab))/sum(Tab)
+accuratezza
+
+specificita = Tab[1,1]/(Tab[1,1]+Tab[1,2])
+specificita
+FPR=1-specificita 
+
+
+sensitivita = Tab[2,2]/(Tab[2,1]+Tab[2,2])
+sensitivita
+
+fit=modf$fitted
+PRROC_obj <- roc.curve(scores.class0 = fit, weights.class0=as.numeric(paste(train$dec)),
+                       curve=TRUE)
+
+
+plot(PRROC_obj)
+```
+
+## 
